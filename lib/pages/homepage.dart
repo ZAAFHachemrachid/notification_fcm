@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:notification_fcm/auth/auth_service.dart';
+import 'package:notification_fcm/pages/chat_detail_page.dart';
+import 'package:notification_fcm/pages/contacts_page.dart';
+import 'package:notification_fcm/services/chat_service.dart';
 import 'package:notification_fcm/theme/app_theme.dart';
+import 'package:provider/provider.dart';
+import 'package:timeago/timeago.dart' as timeago;
 
 class Homepage extends StatefulWidget {
   const Homepage({super.key});
@@ -9,14 +15,52 @@ class Homepage extends StatefulWidget {
 }
 
 class _HomepageState extends State<Homepage> {
+  final _chatService = ChatService();
+  late final AuthService _authService;
+
+  @override
+  void initState() {
+    super.initState();
+    _authService = context.read<AuthService>();
+    // Update user's last seen
+    _authService.updateUserLastSeen();
+  }
+
+  Future<void> _signOut() async {
+    await _authService.signOut();
+  }
+
+  void _navigateToContacts() {
+    final currentUser = _authService.currentUser;
+    if (currentUser == null) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ContactsPage(
+          currentUserId: currentUser.uid,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final currentUser = _authService.currentUser;
+    if (currentUser == null) return const SizedBox();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'Firebase Notifications',
+          'Chats',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _signOut,
+          ),
+        ],
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -27,69 +71,127 @@ class _HomepageState extends State<Homepage> {
           ),
         ),
       ),
-      body: Center(
-        child: TweenAnimationBuilder<double>(
-          duration: const Duration(milliseconds: 800),
-          tween: Tween(begin: 0.0, end: 1.0),
-          builder: (context, value, child) {
-            return Opacity(
-              opacity: value,
-              child: Transform.scale(scale: 0.8 + (0.2 * value), child: child),
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: _chatService.getUserContacts(currentUser.uid),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return Center(
+              child: Text('Error: ${snapshot.error}'),
             );
-          },
-          child: Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Colors.white, AppTheme.surfaceColor],
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppTheme.primaryColor.withOpacity(0.3),
-                        blurRadius: 15,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
+          }
+
+          final contacts = snapshot.data ?? [];
+
+          if (contacts.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.chat_bubble_outline,
+                    size: 64,
+                    color: AppTheme.primaryColor,
                   ),
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.notifications_active,
-                        size: 64,
-                        color: AppTheme.primaryColor,
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        'Welcome!',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.headlineMedium?.copyWith(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'You will receive notifications here',
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
+                  const SizedBox(height: 16),
+                  const Text(
+                    'No chats yet',
+                    style: TextStyle(fontSize: 20),
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton(
+                    onPressed: _navigateToContacts,
+                    child: const Text('Start a chat'),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return ListView.builder(
+            itemCount: contacts.length,
+            itemBuilder: (context, index) {
+              final contact = contacts[index];
+              final user = contact['user'];
+              final lastMessage = contact['lastMessage'];
+              final timestamp = contact['timestamp'] as DateTime;
+
+              return ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: AppTheme.primaryColor,
+                  child: Text(
+                    user.displayName[0].toUpperCase(),
+                    style: const TextStyle(color: Colors.white),
                   ),
                 ),
-              ],
-            ),
-          ),
-        ),
+                title: Text(
+                  user.displayName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        lastMessage,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Text(
+                      timeago.format(timestamp),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+                trailing: StreamBuilder<int>(
+                  stream: _chatService.getUnreadMessagesCount(currentUser.uid),
+                  builder: (context, snapshot) {
+                    final count = snapshot.data ?? 0;
+                    if (count == 0) return const SizedBox();
+
+                    return Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryColor,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        count.toString(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ChatDetailPage(
+                        currentUserId: currentUser.uid,
+                        otherUserId: user.uid,
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _navigateToContacts,
+        child: const Icon(Icons.message),
       ),
     );
   }

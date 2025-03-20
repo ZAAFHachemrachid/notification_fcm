@@ -1,13 +1,14 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:notification_fcm/main.dart';
+import 'package:notification_fcm/pages/chat_detail_page.dart';
 import 'package:notification_fcm/services/notification_service.dart';
 
 class FirebaseApi {
-  // create an instance of Firebase Messaging
   final _firebaseMessaging = FirebaseMessaging.instance;
+  String? currentToken;
 
-  // function to handle background messages
+  // Handle background messages
   @pragma('vm:entry-point')
   static Future<void> handleBackgroundMessage(RemoteMessage message) async {
     debugPrint('🔔 Background message received:');
@@ -17,13 +18,13 @@ class FirebaseApi {
     debugPrint('  Data: ${message.data}');
   }
 
-  // function to initialize notification
+  // Initialize notifications
   Future<void> initNotification() async {
     try {
       // Initialize local notifications
       await NotificationService.initialize();
 
-      // request permission for notification
+      // Request permission for notifications
       final settings = await _firebaseMessaging.requestPermission(
         alert: true,
         badge: true,
@@ -39,23 +40,22 @@ class FirebaseApi {
       debugPrint('  Badge: ${settings.badge}');
       debugPrint('  Sound: ${settings.sound}');
 
-      // Initialize background message handler first
+      // Initialize background message handler
       FirebaseMessaging.onBackgroundMessage(handleBackgroundMessage);
 
-      // fetch the FCM token for this device
-      final fCMToken = await _firebaseMessaging.getToken();
-      debugPrint('🔑 FCM Token: $fCMToken');
+      // Get FCM token
+      currentToken = await _firebaseMessaging.getToken();
+      debugPrint('🔑 FCM Token: $currentToken');
 
-      // Initialize push notification handlers
+      // Initialize push notifications
       await initPushNotification();
     } catch (e) {
       debugPrint('❌ Error initializing notifications: $e');
     }
   }
 
-  // function to handle received messages
+  // Handle message
   void handleMessage(RemoteMessage? message) {
-    // check if the message is null
     if (message == null) return;
 
     debugPrint('🔔 Handling message:');
@@ -64,22 +64,33 @@ class FirebaseApi {
     debugPrint('  Body: ${message.notification?.body}');
     debugPrint('  Data: ${message.data}');
 
-    // navigate to new screen when message is received and user taps on it
+    // Navigate based on message type
     try {
-      navigatorKey.currentState?.pushNamed(
-        '/notification_page',
-        arguments: message,
-      );
+      if (message.data['type'] == 'chat') {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (context) => ChatDetailPage(
+              currentUserId: message.data['receiverId'],
+              otherUserId: message.data['senderId'],
+            ),
+          ),
+        );
+      } else {
+        navigatorKey.currentState?.pushNamed(
+          '/notification_page',
+          arguments: message,
+        );
+      }
       debugPrint('✅ Navigation successful');
     } catch (e) {
       debugPrint('❌ Navigation failed: $e');
     }
   }
 
-  // function to initialize foreground and background settings
+  // Initialize push notification handlers
   Future<void> initPushNotification() async {
-    // Handle message when app is terminated and opened from notification
     try {
+      // Handle terminated state
       final initialMessage =
           await FirebaseMessaging.instance.getInitialMessage();
       if (initialMessage != null) {
@@ -89,7 +100,7 @@ class FirebaseApi {
         handleMessage(initialMessage);
       }
 
-      // Handle message when app is in background and opened from notification
+      // Handle background state
       FirebaseMessaging.onMessageOpenedApp.listen((message) {
         debugPrint(
           '🔔 App opened from background state with message: ${message.messageId}',
@@ -97,12 +108,10 @@ class FirebaseApi {
         handleMessage(message);
       });
 
-      // Handle message when app is in foreground
+      // Handle foreground state
       FirebaseMessaging.onMessage.listen((message) {
         debugPrint('🔔 Received foreground message: ${message.messageId}');
-        // Show local notification when app is in foreground
         NotificationService.showNotification(message);
-        handleMessage(message);
       });
 
       // Set foreground notification presentation options
@@ -116,4 +125,17 @@ class FirebaseApi {
       debugPrint('❌ Error setting up push notifications: $e');
     }
   }
+
+  // Subscribe to topic
+  Future<void> subscribeToTopic(String topic) async {
+    await _firebaseMessaging.subscribeToTopic(topic);
+  }
+
+  // Unsubscribe from topic
+  Future<void> unsubscribeFromTopic(String topic) async {
+    await _firebaseMessaging.unsubscribeFromTopic(topic);
+  }
+
+  // Get current token
+  String? getToken() => currentToken;
 }
